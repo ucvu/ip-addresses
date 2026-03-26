@@ -3,3 +3,55 @@ googlevideo.com
 youtube.com
 ytimg.com
 ggpht.com
+
+# Instagram
+instagram.com
+cdninstagram.com
+facebook.com
+fbcdn.net
+fbsbx.com
+
+# Whatsapp
+whatsapp.com
+whatsapp.net
+
+# Twitter (x)
+twitter.com
+twimg.com
+x.com
+
+# Discord
+discord.com 
+discordapp.com
+discordapp.net
+discord.gg
+discord.media
+
+# TikTok
+tiktok.com
+tiktokcdn.com
+tiktokv.com
+byteoversea.com
+
+# Microsoft
+microsoft.com
+live.com
+xboxlive.com
+
+# Roblox
+roblox.com
+rbxcdn.com
+
+# Apple (facetime)
+apple.com
+icloud.com
+
+# Epic Games
+#epicgames.com
+#epicgames.dev
+#unrealengine.com
+#epicgamescdn.com
+#media-cdn.epicgames.com
+#epicgames-download1.akamaized.net
+#fastly-download.epicgames.com
+#ak.epicgames.com
