@@ -64,17 +64,7 @@ def generate_wireguard_config(ip_list):
     """Generates a comma-separated string for WireGuard."""
     return ", ".join(ip_list)
 
-def generate_keenetic_config(ip_list):
-    """Generates 'route add' commands for Keenetic."""
-    routes = []
-    for cidr in ip_list:
-        try:
-            network = ipaddress.ip_network(cidr, strict=False)
-            route_command = f"route add {network.network_address} mask {network.netmask} 0.0.0.0"
-            routes.append(route_command)
-        except ValueError as e:
-            print(f"Skipping invalid CIDR '{cidr}': {e}")
-    return "\n".join(routes)
+
 
 def main():
     """Main function to parse arguments and generate output."""
@@ -111,9 +101,9 @@ def main():
         parts = []
         if ip_list:
             collapsed_ips = collapse_ip_list(ip_list)
-            parts.append("\n# IP Routes\n" + generate_keenetic_config(collapsed_ips))
+            parts.extend(collapsed_ips)
         if domain_list:
-            parts.append("\n# Domains\n" + "\n".join(domain_list))
+            parts.extend(domain_list)
             
         output_data = "\n".join(parts)
 
