@@ -283,6 +283,8 @@ def parse_args():
                          help="искать сервисы по подстроке вместо генерации файлов (требует --offline)")
     parser.add_argument("--pull", action="store_true",
                          help="только скачать geosite.dat/geoip.dat, без генерации файлов")
+    parser.add_argument("--ru", action="store_true",
+                         help="использовать вместо SERVICES только geosite:category-ru, geoip:ru")
     args = parser.parse_args()
     if args.search and not args.offline:
         parser.error("--search можно использовать только вместе с --offline")
@@ -322,13 +324,15 @@ def main():
         search_services(args.search, domain_entries, ip_entries)
         return
 
-    domain_blocks = build_blocks(domain_entries, SERVICES, "geosite", GEOSITE_FILE)
+    services = ["geosite:category-ru", "geoip:ru"] if args.ru else SERVICES
+
+    domain_blocks = build_blocks(domain_entries, services, "geosite", GEOSITE_FILE)
     domain_files = pack_into_files(domain_blocks, MAX_LINES_PER_FILE)
     write_files(domain_files, OUTPUT_PREFIX_DOMAINS)
 
     if not INCLUDE_IPV6:
         ip_entries = {code: [cidr for cidr in cidrs if ":" not in cidr] for code, cidrs in ip_entries.items()}
-    ip_blocks = build_blocks(ip_entries, SERVICES, "geoip", GEOIP_FILE)
+    ip_blocks = build_blocks(ip_entries, services, "geoip", GEOIP_FILE)
     ip_files = pack_into_files(ip_blocks, MAX_LINES_PER_FILE)
     write_files(ip_files, OUTPUT_PREFIX_IPS)
 

@@ -17,7 +17,10 @@
      DNS" и создаёт их заново из *.txt файлов рядом со скриптом (без
      указания шлюза, с автодобавлением маршрута). Интерфейс маршрута
      зависит от --mode: 'proxy' (по умолчанию) — созданное WireGuard-
-     подключение, 'direct' — интерфейс "Ethernet-подключение".
+     подключение, 'direct' — интерфейс "Ethernet-подключение". Заодно
+     в "Приоритеты подключений" "Ethernet-подключение" перемещается
+     в конец списка (--mode direct) либо в начало, если оно там ещё
+     не первое (--mode proxy).
   5. Если передан --vpn-up — включает VPN-подключение в самом конце.
   6. Удаляет использованный .conf файл (кроме случая --update-only,
      где .conf вообще не используется), если не передан --keep-conf.
@@ -33,17 +36,20 @@
 набора *.txt файлов.
 
 Использование:
-    python install_wireguard.py [--router IP] [--generate | --generate-offline]
+    python install_wireguard.py [--router IP] [--generate | --generate-offline] [--ru]
                                 [--vpn-up] [--update-only] [--keep-conf]
                                 [--mode direct|proxy]
 
-    --router IP        адрес роутера: IP (по умолчанию 192.168.88.57, используется HTTP)
+    --router IP        адрес роутера: IP (по умолчанию 192.168.1.1, используется HTTP)
                        или доменное имя (используется HTTPS); можно также
                        указать URL целиком со схемой (http:// или https://)
     --generate         перед настройкой запустить generate_geo_domains.py,
                        чтобы обновить *.txt файлы со списками
     --generate-offline то же самое, но с флагом --offline (без скачивания
                        geosite.dat/geoip.dat, используются уже имеющиеся)
+    --ru               generate_geo_domains.py генерирует списки доменов и
+                       ip-адресов зоны RU (только вместе с --generate или
+                       --generate-offline)
     --vpn-up           включить VPN-подключение по завершении всех действий
                        (по умолчанию подключение остаётся выключенным)
     --update-only      только пересоздать списки и маршруты DNS на уже
@@ -336,12 +342,60 @@ def get_wireguard_interfaces(session: requests.Session) -> list:
     return [ifname for ifname in get_existing_interfaces(session) if ifname.startswith("Wireguard")]
 
 
-def find_any_interface_by_description(session: requests.Session, description: str) -> str | None:
-    existing = get_existing_interfaces(session)
-    for ifname, desc in existing.items():
-        if desc == description:
+def find_wan_interface(session: requests.Session) -> str | None:
+    # "Ethernet-подключение" в веб-интерфейсе — это локализованный лейбл для
+    # интерфейса с системной ролью "interface-name": "ISP"; поле "description"
+    # при этом может быть произвольным ("Broadband connection" и т.п.) и не
+    # годится для поиска.
+    data = rci(session, [{"show": {"interface": {}}}])[0]["show"]["interface"]
+    for ifname, info in data.items():
+        if info.get("interface-name") == "ISP":
             return ifname
     return None
+
+
+def get_global_interface_settings(session: requests.Session) -> dict:
+    # "ip global" — участие интерфейса в политике приоритетов подключений;
+    # поле "order" задаёт позицию (0 — самый высокий приоритет).
+    data = rci(session, [{"show": {"sc": {"interface": {}}}}])[0]["show"]["sc"]["interface"]
+    settings = {}
+    for ifname, info in data.items():
+        global_settings = info.get("ip", {}).get("global")
+        if global_settings and "order" in global_settings:
+            settings[ifname] = global_settings
+    return settings
+
+
+def move_interface_to_bottom(session: requests.Session, ifname: str) -> None:
+    settings = get_global_interface_settings(session)
+    if ifname not in settings:
+        return  # интерфейс не участвует в приоритетах подключений
+
+    others = sorted((name for name in settings if name != ifname), key=lambda name: settings[name]["order"])
+    new_order = others + [ifname]
+
+    rci(session, [
+        {"interface": {"ip": {"global": {"enabled": settings[name].get("enabled", True), "order": position}}, "name": name}}
+        for position, name in enumerate(new_order)
+    ] + [{"system": {"configuration": {"save": {}}}}])
+    print(f"'{ifname}' перемещён в конец списка приоритетов подключений.")
+
+
+def move_interface_to_top(session: requests.Session, ifname: str) -> None:
+    settings = get_global_interface_settings(session)
+    if ifname not in settings:
+        return  # интерфейс не участвует в приоритетах подключений
+    if settings[ifname]["order"] == 0:
+        return  # уже первый
+
+    others = sorted((name for name in settings if name != ifname), key=lambda name: settings[name]["order"])
+    new_order = [ifname] + others
+
+    rci(session, [
+        {"interface": {"ip": {"global": {"enabled": settings[name].get("enabled", True), "order": position}}, "name": name}}
+        for position, name in enumerate(new_order)
+    ] + [{"system": {"configuration": {"save": {}}}}])
+    print(f"'{ifname}' перемещён в начало списка приоритетов подключений.")
 
 
 def ensure_wireguard_interface(session: requests.Session, description: str, conf_path: Path, use_for_internet: bool) -> str:
@@ -468,18 +522,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=["direct", "proxy"], default="proxy",
                          help="интерфейс для маршрутов DNS: 'direct' — Ethernet-подключение, "
                               "'proxy' — WireGuard-подключение (по умолчанию)")
+    parser.add_argument("--ru", action="store_true",
+                         help="generate_geo_domains.py генерирует списки доменов и ip-адресов зоны RU "
+                              "(только вместе с --generate или --generate-offline)")
     args = parser.parse_args()
     if args.generate and args.generate_offline:
         parser.error("--generate и --generate-offline нельзя использовать одновременно")
+    if args.ru and not (args.generate or args.generate_offline):
+        parser.error("--ru можно использовать только вместе с --generate или --generate-offline")
     return args
 
 
-def run_generator(offline: bool = False) -> None:
+def run_generator(offline: bool = False, ru: bool = False) -> None:
     script = SCRIPT_DIR / "generate_geo_domains.py"
     cmd = [sys.executable, str(script)]
+    if ru:
+        cmd.append("--ru")
     if offline:
         cmd.append("--offline")
-    print(f"Запускаю {script.name}{' --offline' if offline else ''}...")
+    print(f"Запускаю {script.name}{' --ru' if ru else ''}{' --offline' if offline else ''}...")
     subprocess.run(cmd, cwd=SCRIPT_DIR, check=True)
 
 
@@ -499,9 +560,9 @@ def main() -> None:
             ROUTER_URL = f"{scheme}://{args.router}"
 
     if args.generate:
-        run_generator()
+        run_generator(ru=args.ru)
     elif args.generate_offline:
-        run_generator(offline=True)
+        run_generator(offline=True, ru=args.ru)
 
     session = requests.Session()
     login(session)
@@ -526,13 +587,19 @@ def main() -> None:
         ifname = ensure_wireguard_interface(session, connection_name, conf_path, USE_FOR_INTERNET)
 
     if args.mode == "direct":
-        route_ifname = find_any_interface_by_description(session, "Ethernet-подключение")
+        route_ifname = find_wan_interface(session)
         if route_ifname is None:
-            print("Не найден интерфейс 'Ethernet-подключение' на роутере.", file=sys.stderr)
+            print("Не найден WAN-интерфейс (Ethernet-подключение) на роутере.", file=sys.stderr)
             sys.exit(1)
         print(f"Режим direct: маршруты DNS будут указывать на {route_ifname} (Ethernet-подключение).")
+        move_interface_to_bottom(session, route_ifname)
     else:
         route_ifname = ifname
+        eth_ifname = find_wan_interface(session)
+        if eth_ifname is None:
+            print("WAN-интерфейс (Ethernet-подключение) не найден, проверку приоритета пропускаю.")
+        else:
+            move_interface_to_top(session, eth_ifname)
 
     print("Удаляю существующие списки и маршруты DNS...")
     delete_all_domain_lists_and_routes(session)
