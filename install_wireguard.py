@@ -37,7 +37,9 @@
                                 [--vpn-up] [--update-only] [--keep-conf]
                                 [--mode direct|proxy]
 
-    --router IP        IP-адрес роутера (по умолчанию 192.168.88.57)
+    --router IP        адрес роутера: IP (по умолчанию 192.168.88.57, используется HTTP)
+                       или доменное имя (используется HTTPS); можно также
+                       указать URL целиком со схемой (http:// или https://)
     --generate         перед настройкой запустить generate_geo_domains.py,
                        чтобы обновить *.txt файлы со списками
     --generate-offline то же самое, но с флагом --offline (без скачивания
@@ -450,7 +452,8 @@ def create_dns_route(session: requests.Session, group_id: str, interface_name: s
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--router", metavar="IP", help="IP-адрес роутера (по умолчанию 192.168.88.57)")
+    parser.add_argument("--router", metavar="ADDR",
+                         help="IP, доменное имя или полный URL роутера (по умолчанию 192.168.88.57)")
     parser.add_argument("--generate", action="store_true",
                          help="перед настройкой запустить generate_geo_domains.py для обновления *.txt списков")
     parser.add_argument("--generate-offline", action="store_true",
@@ -484,7 +487,16 @@ def main() -> None:
     global ROUTER_URL
     args = parse_args()
     if args.router:
-        ROUTER_URL = f"http://{args.router}"
+        if "://" in args.router:
+            ROUTER_URL = args.router.rstrip("/")
+        else:
+            try:
+                ipaddress.ip_address(args.router)
+                scheme = "http"  # локальный IP роутера — обычный HTTP без TLS
+            except ValueError:
+                scheme = "https"  # доменное имя (например, облачный доступ) — почти всегда HTTPS,
+                                   # а POST на HTTP при редиректе на HTTPS теряет метод/тело запроса
+            ROUTER_URL = f"{scheme}://{args.router}"
 
     if args.generate:
         run_generator()
