@@ -17,7 +17,10 @@
      DNS" и создаёт их заново из *.txt файлов рядом со скриптом (без
      указания шлюза, с автодобавлением маршрута). Интерфейс маршрута
      зависит от --mode: 'proxy' (по умолчанию) — созданное WireGuard-
-     подключение, 'direct' — интерфейс "Ethernet-подключение".
+     подключение, 'direct' — интерфейс "Ethernet-подключение". Заодно
+     в "Приоритеты подключений" "Ethernet-подключение" перемещается
+     в конец списка (--mode direct) либо в начало, если оно там ещё
+     не первое (--mode proxy).
   5. Если передан --vpn-up — включает VPN-подключение в самом конце.
   6. Удаляет использованный .conf файл (кроме случая --update-only,
      где .conf вообще не используется), если не передан --keep-conf.
@@ -344,6 +347,50 @@ def find_any_interface_by_description(session: requests.Session, description: st
     return None
 
 
+def get_global_interface_settings(session: requests.Session) -> dict:
+    # "ip global" — участие интерфейса в политике приоритетов подключений;
+    # поле "order" задаёт позицию (0 — самый высокий приоритет).
+    data = rci(session, [{"show": {"sc": {"interface": {}}}}])[0]["show"]["sc"]["interface"]
+    settings = {}
+    for ifname, info in data.items():
+        global_settings = info.get("ip", {}).get("global")
+        if global_settings and "order" in global_settings:
+            settings[ifname] = global_settings
+    return settings
+
+
+def move_interface_to_bottom(session: requests.Session, ifname: str) -> None:
+    settings = get_global_interface_settings(session)
+    if ifname not in settings:
+        return  # интерфейс не участвует в приоритетах подключений
+
+    others = sorted((name for name in settings if name != ifname), key=lambda name: settings[name]["order"])
+    new_order = others + [ifname]
+
+    rci(session, [
+        {"interface": {"ip": {"global": {"enabled": settings[name].get("enabled", True), "order": position}}, "name": name}}
+        for position, name in enumerate(new_order)
+    ] + [{"system": {"configuration": {"save": {}}}}])
+    print(f"'{ifname}' перемещён в конец списка приоритетов подключений.")
+
+
+def move_interface_to_top(session: requests.Session, ifname: str) -> None:
+    settings = get_global_interface_settings(session)
+    if ifname not in settings:
+        return  # интерфейс не участвует в приоритетах подключений
+    if settings[ifname]["order"] == 0:
+        return  # уже первый
+
+    others = sorted((name for name in settings if name != ifname), key=lambda name: settings[name]["order"])
+    new_order = [ifname] + others
+
+    rci(session, [
+        {"interface": {"ip": {"global": {"enabled": settings[name].get("enabled", True), "order": position}}, "name": name}}
+        for position, name in enumerate(new_order)
+    ] + [{"system": {"configuration": {"save": {}}}}])
+    print(f"'{ifname}' перемещён в начало списка приоритетов подключений.")
+
+
 def ensure_wireguard_interface(session: requests.Session, description: str, conf_path: Path, use_for_internet: bool) -> str:
     existing_ifname = find_interface_by_description(session, description)
     if existing_ifname:
@@ -453,7 +500,7 @@ def create_dns_route(session: requests.Session, group_id: str, interface_name: s
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--router", metavar="ADDR",
-                         help="IP, доменное имя или полный URL роутера (по умолчанию 192.168.88.57)")
+                         help="IP, доменное имя или полный URL роутера (по умолчанию 192.168.1.1)")
     parser.add_argument("--generate", action="store_true",
                          help="перед настройкой запустить generate_geo_domains.py для обновления *.txt списков")
     parser.add_argument("--generate-offline", action="store_true",
@@ -531,8 +578,14 @@ def main() -> None:
             print("Не найден интерфейс 'Ethernet-подключение' на роутере.", file=sys.stderr)
             sys.exit(1)
         print(f"Режим direct: маршруты DNS будут указывать на {route_ifname} (Ethernet-подключение).")
+        move_interface_to_bottom(session, route_ifname)
     else:
         route_ifname = ifname
+        eth_ifname = find_any_interface_by_description(session, "Ethernet-подключение")
+        if eth_ifname is None:
+            print("Интерфейс 'Ethernet-подключение' не найден, проверку приоритета пропускаю.")
+        else:
+            move_interface_to_top(session, eth_ifname)
 
     print("Удаляю существующие списки и маршруты DNS...")
     delete_all_domain_lists_and_routes(session)
