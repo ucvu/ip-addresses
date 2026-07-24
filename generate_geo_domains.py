@@ -21,16 +21,15 @@ GEOSITE_FILE = "geosite.dat"
 GEOIP_URL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
 GEOIP_FILE = "geoip.dat"
 
-# SERVICES = [
-#         "geosite:anthropic", "geosite:openai", "geosite:youtube",
-#         "geosite:twitter", "geoip:twitter",
-#         "geosite:google-gemini", "geosite:instagram",
-#         "geosite:telegram", "geoip:telegram",
-#         "geosite:github", "geosite:github-copilot", "geosite:tiktok", "geosite:discord"
-        
-#     ]
-
-SERVICES = [ "geosite:category-ru" ]
+SERVICES = [
+        "geosite:anthropic", "geosite:openai", "geosite:youtube",
+        "geosite:twitter", "geoip:twitter",
+        "geosite:google-gemini", "geosite:instagram",
+        "geosite:telegram", "geoip:telegram",
+        "geosite:github", "geosite:github-copilot", "geosite:tiktok", "geosite:discord"       
+    ]
+# 
+# SERVICES = [ "geosite:category-ru", "geoip:ru" ]
 
 OUTPUT_PREFIX_DOMAINS = "geosite_domains"
 OUTPUT_PREFIX_IPS = "geoip_ips"
