@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Новая операция{% endblock %}
+{% block content %}
+<h1>Новая операция</h1>
+{% if not routers %}<div class="alert warning">Сначала <a href="/routers">добавьте роутер</a>.</div>{% endif %}
+<form class="card" method="post" enctype="multipart/form-data" id="operation-form">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <div class="grid two">
+    <div>
+      <label>Операция</label>
+      <select name="action" id="action">
+        <option value="update">Обновить списки и маршруты</option>
+        <option value="endpoint">Сменить endpoint</option>
+        <option value="install">Первичная установка WireGuard</option>
+      </select>
+
+      <label for="router-search">Поиск роутера</label>
+      <input id="router-search" type="search" placeholder="Название или адрес" autocomplete="off">
+
+      <div class="router-list-head">
+        <label>Роутеры</label>
+        {% if routers %}
+        <label class="check select-all-control">
+          <input type="checkbox" id="select-all-routers"> Выбрать все
+        </label>
+        {% endif %}
+      </div>
+      <div id="router-list">
+        {% for item in routers %}
+        <label class="router-choice check" data-router-choice data-search="{{ item.name }} {{ item.address }}">
+          <input type="checkbox" name="router_ids" value="{{ item.id }}">
+          <span><strong>{{ item.name }}</strong><br><span class="muted">{{ item.address }}</span></span>
+        </label>
+        {% endfor %}
+      </div>
+      <p id="router-search-empty" class="muted hidden">Роутеры не найдены.</p>
+    </div>
+    <div>
+      <div data-for="preset">
+        <label>Пресет</label>
+        <select name="preset_id">
+          <option value="">Выберите…</option>
+          {% for item in presets %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div data-for="endpoint" class="hidden">
+        <label>Новый endpoint</label>
+        <input name="endpoint" placeholder="vpn.example.com:51820">
+      </div>
+      <div data-for="install" class="hidden">
+        <label>WireGuard-конфигурация</label>
+        <input type="file" name="conf_file" accept=".conf">
+      </div>
+      <label class="check"><input type="checkbox" name="vpn_off" value="1"> Оставить VPN выключенным после операции</label>
+      <label class="check" data-for="generation"><input type="checkbox" name="online" value="1"> Скачать свежие базы правил</label>
+      <label class="check" data-for="generation"><input type="checkbox" name="generate_off" value="1"> Использовать уже сгенерированные списки</label>
+      <label class="check"><input type="checkbox" name="manual" value="1"> Подтверждать каждый роутер отдельно</label>
+    </div>
+  </div>
+  <div class="danger-box" data-for="destructive">
+    <strong>Опасная операция</strong>
+    <p>Все существующие списки и правила в «Маршрутизация → Маршруты DNS» будут удалены и созданы заново. VPN временно выключится.</p>
+    <label class="check"><input type="checkbox" name="confirm_destructive" value="1"> Я понимаю последствия и подтверждаю выполнение</label>
+  </div>
+  <div class="actions"><button {% if not routers %}disabled{% endif %}>Добавить в очередь</button></div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+const action=document.querySelector('#action');
+const search=document.querySelector('#router-search');
+const choices=[...document.querySelectorAll('[data-router-choice]')];
+const routerInputs=choices.map(choice=>choice.querySelector('input[name=router_ids]'));
+const selectAll=document.querySelector('#select-all-routers');
+const searchEmpty=document.querySelector('#router-search-empty');
+
+function visibleRouterInputs(){
+  return choices.filter(choice=>!choice.classList.contains('hidden')).map(choice=>choice.querySelector('input[name=router_ids]'));
+}
+function syncSelectAll(){
+  if(!selectAll)return;
+  const visible=visibleRouterInputs();
+  const checked=visible.filter(input=>input.checked).length;
+  selectAll.checked=visible.length>0&&checked===visible.length;
+  selectAll.indeterminate=checked>0&&checked<visible.length;
+  selectAll.disabled=action.value==='install'||visible.length===0;
+}
+function syncSearch(){
+  const query=search.value.trim().toLocaleLowerCase('ru');
+  let visibleCount=0;
+  choices.forEach(choice=>{
+    const visible=!query||choice.dataset.search.toLocaleLowerCase('ru').includes(query);
+    choice.classList.toggle('hidden',!visible);
+    if(visible)visibleCount+=1;
+  });
+  searchEmpty.classList.toggle('hidden',visibleCount!==0||choices.length===0);
+  syncSelectAll();
+}
+function sync(){
+  const value=action.value;
+  document.querySelectorAll('[data-for=endpoint]').forEach(element=>element.classList.toggle('hidden',value!=='endpoint'));
+  document.querySelectorAll('[data-for=install]').forEach(element=>element.classList.toggle('hidden',value!=='install'));
+  document.querySelectorAll('[data-for=preset],[data-for=generation],[data-for=destructive]').forEach(element=>element.classList.toggle('hidden',value==='endpoint'));
+  if(value==='install'){
+    const checked=routerInputs.filter(input=>input.checked);
+    checked.slice(1).forEach(input=>input.checked=false);
+  }
+  syncSelectAll();
+}
+routerInputs.forEach(input=>input.addEventListener('change',()=>{
+  if(action.value==='install'&&input.checked){
+    routerInputs.forEach(other=>{if(other!==input)other.checked=false});
+  }
+  syncSelectAll();
+}));
+if(selectAll){
+  selectAll.addEventListener('change',()=>{
+    visibleRouterInputs().forEach(input=>input.checked=selectAll.checked);
+    syncSelectAll();
+  });
+}
+search.addEventListener('input',syncSearch);
+action.addEventListener('change',sync);
+syncSearch();
+sync();
+</script>
+{% endblock %}

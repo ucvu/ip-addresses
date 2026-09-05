@@ -1,0 +1,8 @@
+geosite_domains_*.txt
+geoip_ips_*.txt
+__pycache__/
+*.dat
+.env
+.webdata/
+.venv/
+routers.txt

@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}Журнал задач{% endblock %}{% block content %}
+<div class="section-head"><h1>Очередь и журнал</h1><a class="button" href="/operations">Новая операция</a></div>
+<section class="card">{% if jobs %}<table><tr><th>№</th><th>Операция</th><th>Целей</th><th>Ошибок</th><th>Статус</th><th>Создана</th></tr>{% for job in jobs %}
+<tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.type }}</td><td>{{ job.target_count }}</td><td>{{ job.failed_count or 0 }}</td><td><span class="badge {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span></td><td>{{ job.created_at }}</td></tr>{% endfor %}</table>
+{% else %}<div class="empty">Задач пока нет.</div>{% endif %}</section>{% endblock %}

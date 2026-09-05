@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Задача #{{ job.id }}{% endblock %}
+{% block content %}
+<div class="section-head">
+  <div>
+    <h1>Задача #{{ job.id }}</h1>
+    <p>{{ job.type }} · <span id="job-status" class="badge {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span></p>
+  </div>
+  <a class="button secondary" href="/jobs">Все задачи</a>
+</div>
+<div id="job-error" class="alert error{% if not job.error %} hidden{% endif %}">{{ job.error or '' }}</div>
+<section class="card">
+  <h2>Цели</h2>
+  {% if targets %}
+  <table>
+    <tr><th>Роутер</th><th>Адрес</th><th>Статус</th><th>Ошибка</th></tr>
+    {% for item in targets %}
+    <tr data-target-id="{{ item.id }}">
+      <td>{{ item.name }}</td>
+      <td>{{ item.address }}</td>
+      <td><span data-target-status class="badge {{ item.status }}">{{ status_labels.get(item.status, item.status) }}</span></td>
+      <td data-target-error>{{ item.error or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">Системная задача без роутеров.</p>
+  {% endif %}
+
+  <div id="job-actions-panel">
+    {% include "_job_actions.html" %}
+  </div>
+</section>
+<section class="card" style="margin-top:18px">
+  <div class="section-head">
+    <h2>Живой журнал</h2>
+    <div class="log-controls">
+      <button type="button" id="toggle-live" class="small secondary">Приостановить</button>
+      <button type="button" id="copy-log" class="small secondary">Копировать</button>
+      <label class="check"><input type="checkbox" id="auto-scroll" checked> Автопрокрутка</label>
+      <span id="buffered-count" class="muted"></span>
+    </div>
+  </div>
+  <div id="log" class="log" tabindex="0"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script>
+const log=document.querySelector('#log'),toggle=document.querySelector('#toggle-live'),copy=document.querySelector('#copy-log'),autoScroll=document.querySelector('#auto-scroll'),counter=document.querySelector('#buffered-count'),actionsPanel=document.querySelector('#job-actions-panel');
+const labels={queued:'В очереди',running:'Выполняется',waiting:'Ожидает подтверждения',success:'Успешно',failed:'Ошибка',cancelled:'Отменено',interrupted:'Прервано'};
+let paused=false,buffer=[],refreshPromise=null,actionsPromise=null,renderedStatus='{{ job.status }}';
+function setBadge(element,status){element.textContent=labels[status]||status;element.className='badge '+status}
+function updateCsrf(token){if(token)document.querySelectorAll('input[name="csrf"]').forEach(input=>input.value=token)}
+function refreshActions(){if(actionsPromise)return actionsPromise;actionsPromise=(async()=>{try{const response=await fetch('/jobs/{{ job.id }}/actions',{cache:'no-store'});if(!response.ok)return false;actionsPanel.innerHTML=await response.text();return true}catch(_){return false}finally{actionsPromise=null}})();return actionsPromise}
+function refreshTargetState(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const response=await fetch('/jobs/{{ job.id }}/state',{cache:'no-store'});if(!response.ok)return false;const data=await response.json();updateCsrf(data.csrf_token);setBadge(document.querySelector('#job-status'),data.status);const jobError=document.querySelector('#job-error');jobError.textContent=data.error||'';jobError.classList.toggle('hidden',!data.error);data.targets.forEach(target=>{const row=document.querySelector('[data-target-id="'+target.id+'"]');if(!row)return;setBadge(row.querySelector('[data-target-status]'),target.status);row.querySelector('[data-target-error]').textContent=target.error||''});if(data.status!==renderedStatus&&await refreshActions())renderedStatus=data.status;return true}catch(_){return false}finally{refreshPromise=null}})();return refreshPromise}
+actionsPanel.addEventListener('click',event=>{const button=event.target.closest('button');if(!button)return;const retryInputs=[...actionsPanel.querySelectorAll('form[action$="/retry"] input[name="target_ids"]')];if(button.id==='retry-select-all')retryInputs.forEach(input=>input.checked=true);if(button.id==='retry-clear-all')retryInputs.forEach(input=>input.checked=false)});
+actionsPanel.addEventListener('submit',async event=>{const form=event.target;if(form.method.toLowerCase()!=='post')return;event.preventDefault();const submitter=event.submitter;if(submitter)submitter.disabled=true;const refreshed=await refreshTargetState();if(!refreshed){if(submitter)submitter.disabled=false;counter.textContent='Не удалось обновить защитный токен. Повторите попытку.';return}if(!form.isConnected)return;HTMLFormElement.prototype.submit.call(form)});
+function appendLine(d){const line=document.createElement('div');line.className='log-line '+d.level;line.textContent=(d.router?'['+d.router+'] ':'')+d.message;log.appendChild(line);if(autoScroll.checked)log.scrollTop=log.scrollHeight}
+const source=new EventSource('/jobs/{{ job.id }}/events');
+source.onmessage=e=>{const d=JSON.parse(e.data);if(paused){buffer.push(d);counter.textContent='Новых строк: '+buffer.length}else appendLine(d);if(['start','target','manual','iteration','finish'].includes(d.stage))refreshTargetState()};
+toggle.addEventListener('click',()=>{paused=!paused;toggle.textContent=paused?'Продолжить':'Приостановить';if(!paused){buffer.forEach(appendLine);buffer=[];counter.textContent=''}});
+log.addEventListener('scroll',()=>{if(log.scrollHeight-log.scrollTop-log.clientHeight>40)autoScroll.checked=false});
+copy.addEventListener('click',async()=>{const text=[...log.querySelectorAll('.log-line')].map(x=>x.textContent).join('\n');try{await navigator.clipboard.writeText(text);copy.textContent='Скопировано'}catch(_){const range=document.createRange();range.selectNodeContents(log);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);copy.textContent='Выделено — нажмите Ctrl+C'}setTimeout(()=>copy.textContent='Копировать',1800)});
+source.addEventListener('done',e=>{source.close();const d=JSON.parse(e.data);setBadge(document.querySelector('#job-status'),d.status);refreshTargetState();counter.textContent=paused&&buffer.length?'Новых строк: '+buffer.length:'Выполнение завершено'});
+source.onerror=()=>{};
+refreshTargetState();
+</script>{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block title %}Настройки{% endblock %}{% block content %}
+<h1>Настройки</h1><div class="grid two"><section class="card"><h2>Доступ к роутерам</h2><p class="muted">Одна общая пара для всех роутеров. Значения шифруются перед записью в SQLite.</p>
+{% if credentials_ready %}<div class="alert success">Учётные данные настроены.</div>{% endif %}
+<form method="post" action="/settings/credentials"><input type="hidden" name="csrf" value="{{ csrf_token }}"><label>Логин</label><input name="username" value="{{ router_username }}" required autocomplete="username">
+<label>{{ "Новый пароль" if credentials_ready else "Пароль" }}</label><input type="password" name="password" required autocomplete="new-password"><div class="actions"><button>Сохранить</button></div></form></section>
+<section class="card"><h2>Сетевой доступ</h2><p>Сервер настроен на <code>{{ host }}:{{ port }}</code>.</p><p class="muted">Панель не требует входа, поэтому по умолчанию доступна только на этом компьютере.</p>
+<p class="muted">Для LAN задайте <code>NETCRAZE_WEB_HOST=0.0.0.0</code>. Любой пользователь локальной сети сможет управлять роутерами; используйте сетевые ограничения или HTTPS reverse proxy.</p></section></div>{% endblock %}

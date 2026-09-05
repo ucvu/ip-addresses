@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block title %}Пресеты{% endblock %}{% block content %}
+<div class="section-head"><div><h1>Пресеты</h1><p class="muted">Первая строка — mode: direct или mode: proxy.</p></div></div>
+<div class="grid two"><section class="card"><h2>{{ "Изменить" if selected else "Создать" }} пресет</h2>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="preset_id" value="{{ selected.id if selected else '' }}">
+<label>Название</label><input name="name" value="{{ selected.name if selected else '' }}" required>
+<label>Содержимое</label><textarea name="content" spellcheck="false" required>{{ selected.content if selected else 'mode: proxy\n\ngeosite:openai\n' }}</textarea>
+<div class="actions"><button>Проверить и сохранить</button>{% if selected %}<a class="button secondary" href="/presets">Отмена</a>{% endif %}</div></form>
+<hr><form method="post" action="/presets/import" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{ csrf_token }}"><label>Импорт .txt</label><input type="file" name="preset_file" accept=".txt,text/plain" required><div class="actions"><button class="secondary">Импортировать</button></div></form>
+</section><section class="card"><h2>Сохранённые пресеты</h2>{% if presets %}<table><tr><th>Название</th><th>Режим</th><th></th></tr>{% for item in presets %}
+<tr><td>{{ item.name }}</td><td>{{ item.content.splitlines()[0] }}</td><td><a class="button small secondary" href="/presets?edit={{ item.id }}">Изменить</a> <a class="button small secondary" href="/presets/{{ item.id }}/export">Экспорт</a>
+<form class="inline" method="post" action="/presets/{{ item.id }}/delete" onsubmit="return confirm('Удалить пресет?')"><input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="small danger">Удалить</button></form></td></tr>{% endfor %}</table>
+{% else %}<div class="empty">Пресетов пока нет.</div>{% endif %}</section></div>{% endblock %}

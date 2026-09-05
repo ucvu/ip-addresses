@@ -1,0 +1,41 @@
+<div class="actions">
+  {% if job.status == 'waiting' %}
+  <form method="post" action="/jobs/{{ job.id }}/confirm">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button>Продолжить</button>
+  </form>
+  {% endif %}
+  {% if job.status not in final_statuses %}
+  <form method="post" action="/jobs/{{ job.id }}/cancel">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <button class="danger">Безопасно отменить</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if job.status in ['failed', 'interrupted', 'cancelled'] and job.type != 'install' and retry_targets %}
+<hr>
+<form method="post" action="/jobs/{{ job.id }}/retry">
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <h3>{{ 'Начать проход заново' if job.status in ['interrupted', 'cancelled'] else 'Повторить неудачные' }}</h3>
+  {% if job.status in ['interrupted', 'cancelled'] %}
+  <p class="muted">Выберите роутеры исходной задачи, по которым нужно пройти заново.</p>
+  {% else %}
+  <p class="muted">Снимите галочки с роутеров, которые не нужно запускать повторно.</p>
+  {% endif %}
+  <div class="actions retry-selection-actions">
+    <button type="button" id="retry-select-all" class="small secondary">Отметить все</button>
+    <button type="button" id="retry-clear-all" class="small secondary">Снять все</button>
+  </div>
+  {% for item in retry_targets %}
+  <label class="router-choice check">
+    <input type="checkbox" name="target_ids" value="{{ item.id }}"{% if job.status not in ['interrupted', 'cancelled'] or item.status != 'success' %} checked{% endif %}>
+    <span><strong>{{ item.name }}</strong><br><span class="muted">{{ item.address }}</span></span>
+  </label>
+  {% endfor %}
+  <label for="retry-iterations">Количество прогонов</label>
+  <input id="retry-iterations" type="number" name="iterations" value="1" min="1" max="20" required>
+  <p class="muted">Каждый прогон последовательно обработает все отмеченные роутеры. Допустимо от 1 до 20.</p>
+  <button class="secondary">{{ 'Начать проход заново' if job.status in ['interrupted', 'cancelled'] else 'Повторить неудачные' }}</button>
+</form>
+{% endif %}

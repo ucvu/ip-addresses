@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block title %}Обзор{% endblock %}{% block content %}
+<div class="section-head"><div><h1>Обзор</h1><p class="muted">Локальное управление WireGuard и DNS-маршрутами Netcraze.</p></div><a class="button" href="/operations">Новая операция</a></div>
+{% if not credentials_ready %}<div class="alert warning">Сохраните общие учётные данные роутеров в <a href="/settings">настройках</a>.</div>{% endif %}
+<div class="grid three"><section class="card"><div class="stat">{{ routers|length }}</div><div class="muted">роутеров</div></section>
+<section class="card"><div class="stat">{{ presets|length }}</div><div class="muted">пресетов</div></section>
+<section class="card"><div class="stat">{{ jobs|length }}</div><div class="muted">последних задач</div></section></div>
+<section class="card" style="margin-top:18px"><h2>Последние задачи</h2>{% if jobs %}<table><tr><th>№</th><th>Операция</th><th>Статус</th><th>Создана</th></tr>
+{% for job in jobs %}<tr><td><a href="/jobs/{{ job.id }}">#{{ job.id }}</a></td><td>{{ job.type }}</td><td><span class="badge {{ job.status }}">{{ status_labels.get(job.status, job.status) }}</span></td><td>{{ job.created_at }}</td></tr>{% endfor %}</table>
+{% else %}<div class="empty">Задач пока нет.</div>{% endif %}</section>{% endblock %}

@@ -1,0 +1,4 @@
+mode:direct
+geosite:category-ru
+geoip:ru
+geosite:kinopoisk

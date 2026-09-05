@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Netcraze WireGuard{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', path='/style.css') }}"></head>
+<body><header class="topbar"><nav class="nav">
+<a class="brand" href="/">Netcraze WireGuard</a><a href="/routers">Роутеры</a><a href="/presets">Пресеты</a>
+<a href="/operations">Операции</a><a href="/datasets">Базы правил</a><a href="/jobs">Журнал</a><a href="/settings">Настройки</a>
+</nav></header>
+<main class="container">
+{% for item in flashes %}<div class="alert {{ item.level }}">{{ item.message }}</div>{% endfor %}
+{% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+{% block content %}{% endblock %}</main>{% block scripts %}{% endblock %}</body></html>

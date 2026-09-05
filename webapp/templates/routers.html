@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Роутеры{% endblock %}
+{% block content %}
+<h1>Роутеры</h1>
+<div class="grid two">
+  <section class="card">
+    <h2>{{ "Изменить" if selected else "Добавить" }} роутер</h2>
+    <form method="post">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="router_id" value="{{ selected.id if selected else '' }}">
+      <label>Название</label>
+      <input name="name" value="{{ selected.name if selected else '' }}" placeholder="Домашний роутер" required>
+      <label>Адрес</label>
+      <input name="address" value="{{ selected.address if selected else '' }}" placeholder="192.168.1.1" required>
+      <p class="muted">IP использует HTTP, доменное имя — HTTPS. Можно указать полный URL.</p>
+      <div class="actions">
+        <button>Сохранить</button>
+        {% if selected %}<a class="button secondary" href="/routers">Отмена</a>{% endif %}
+      </div>
+    </form>
+
+    <hr>
+    <h2>Импорт из файла</h2>
+    <form method="post" action="/routers/import" enctype="multipart/form-data">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label>Текстовый файл</label>
+      <input type="file" name="router_file" accept=".txt,text/plain" required>
+      <p class="muted">Один роутер на строку: сначала адрес, затем необязательное название. Название может содержать пробелы.</p>
+      <pre>192.168.1.1 Дом
+router.example.com</pre>
+      <button>Импортировать</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Сохранённые роутеры</h2>
+    {% if routers %}
+    <table>
+      <tr><th>Название</th><th>Адрес</th><th></th></tr>
+      {% for item in routers %}
+      <tr>
+        <td>{{ item.name }}</td>
+        <td>{{ item.address }}</td>
+        <td>
+          <a class="button small secondary" href="/routers?edit={{ item.id }}">Изменить</a>
+          <form class="inline" method="post" action="/routers/{{ item.id }}/delete" onsubmit="return confirm('Удалить роутер?')">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <button class="small danger">Удалить</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <div class="empty">Добавьте первый роутер или импортируйте список.</div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
