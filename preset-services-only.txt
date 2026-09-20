@@ -17,8 +17,10 @@ geosite:discord
 geosite:playstation
 geosite:sony
 geosite:whatsapp
-geosite:netflix
-geoip:netflix
+geoip:facebook
+geosite:facebook
+geosite:facebook-dev
+geosite:meta
 
 # discord
 domain:5.200.14.128/25
@@ -30,7 +32,6 @@ domain:104.21.0.0/16
 domain:104.22.0.0/16
 domain:104.24.0.0/16
 domain:104.26.0.0/16
-domain:104.29.0.0/16
 domain:13.227.0.0/16
 domain:138.128.0.0/16
 domain:143.204.0.0/16
@@ -64,7 +65,6 @@ domain:37.1.0.0/16
 domain:37.48.0.0/16
 domain:45.134.0.0/16
 domain:66.22.0.0/16
-domain:cdn.discord.app
 
 #ajax
 domain:hts-hubs.prod.ajax.systems
