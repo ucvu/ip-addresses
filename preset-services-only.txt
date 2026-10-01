@@ -21,6 +21,8 @@ geoip:facebook
 geosite:facebook
 geosite:facebook-dev
 geosite:meta
+geosite:netflix
+geoip:netflix
 
 # discord
 domain:5.200.14.128/25
