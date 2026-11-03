@@ -25,6 +25,9 @@
      --vpn-off подключение, наоборот, остаётся выключенным.
   6. Удаляет использованный .conf файл, если не передан --keep-conf.
 
+При install и update также добавляет DNS 9.9.9.9 для любого подключения
+в "Интернет-фильтры -> Настройка DNS", если такой записи ещё нет.
+
 При --action update выполняются только шаги 2, 4 и 5: имя WireGuard-
 подключения берётся с роутера (первое найденное), .conf файл рядом
 со скриптом игнорируется и не удаляется.
@@ -65,7 +68,7 @@
                                 [--vpn-off]
 
     --action           install — полная установка WireGuard;
-                       update — только обновление списков и маршрутов DNS;
+                       update — обновление списков, маршрутов и дополнительного DNS;
                        endpoint — только смена адреса сервера WireGuard
     --preset FILE      файл пресета: режим маршрутизации + список сервисов
                        (обязателен для install и update)
@@ -113,9 +116,10 @@ HTTP_TIMEOUT = (15, 60)  # (соединение, ответ) в секунда�
 VPN_DOWN_DELAY = 10  # секунд паузы после выключения VPN: роутер отвечает раньше,
                      # чем перестраивает маршрутизацию, и проверять сразу бесполезно
 VPN_DOWN_TIMEOUT = 300  # секунд на попытки достучаться до роутера после выключения VPN
-ACTION_DELAY = 1  # секунд паузы между RCI-командами при создании списков/маршрутов:
+ACTION_DELAY = 1  # секунд паузы между RCI-командами при создании списков/маршрутов и настройке DNS:
                   # роутер иногда молча игнорирует команду, если они идут слишком часто подряд
 VERIFY_ATTEMPTS = 3  # попыток проверить и досоздать недостающие списки/маршруты
+GLOBAL_DNS_SERVER = "9.9.9.9"  # дополнительный DNS для любого подключения
 
 USE_FOR_INTERNET = True
 
@@ -814,11 +818,40 @@ def ensure_lists_and_routes(session: requests.Session, lists_to_create: dict, ro
     sys.exit(1)
 
 
+def ensure_global_dns_server(session: requests.Session) -> None:
+    # Запись, привязанная к WireGuard, не заменяет DNS для любого подключения.
+    # Роутер может не успеть применить команду: не объединяем добавление,
+    # сохранение и проверку в один запрос и выдерживаем паузу после каждой записи.
+    for attempt in range(1, VERIFY_ATTEMPTS + 2):
+        data = rci(session, [{"show": {"sc": {"ip": {"name-server": {}}}}}])
+        servers = data[0]["show"]["sc"]["ip"].get("name-server") or []
+        if isinstance(servers, dict):
+            servers = [servers]
+        if any(server.get("address") == GLOBAL_DNS_SERVER
+               and not server.get("interface") and not server.get("domain")
+               for server in servers):
+            print(f"DNS {GLOBAL_DNS_SERVER} для любого подключения настроен.")
+            return
+        if attempt > VERIFY_ATTEMPTS:
+            break
+
+        print(f"Добавляю DNS {GLOBAL_DNS_SERVER} для любого подключения "
+              f"(попытка {attempt}/{VERIFY_ATTEMPTS})...")
+        rci(session, [{"ip": {"name-server": {"address": GLOBAL_DNS_SERVER}}}])
+        time.sleep(ACTION_DELAY)
+        rci(session, [{"system": {"configuration": {"save": {}}}}])
+        time.sleep(ACTION_DELAY)
+
+    print(f"Не удалось настроить DNS {GLOBAL_DNS_SERVER} после "
+          f"{VERIFY_ATTEMPTS} попыток.", file=sys.stderr)
+    sys.exit(1)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--action", choices=["install", "update", "endpoint", "check"], required=True,
                          help="install — полная установка WireGuard; "
-                              "update — только обновление списков и маршрутов DNS; "
+                              "update — обновление списков, маршрутов и дополнительного DNS; "
                               "endpoint — только смена адреса сервера WireGuard; "
                               "check — проверка доступа без изменения настроек")
     parser.add_argument("--preset", metavar="FILE",
@@ -998,6 +1031,10 @@ def main() -> None:
         lists_to_create = {path.stem: read_list_entries(path) for path in list_files}
         lists_to_create = {name: entries for name, entries in lists_to_create.items() if entries}
         ensure_lists_and_routes(session, lists_to_create, route_ifname)
+
+    # Включение VPN может оборвать соединение с роутером и остаётся последним
+    # действием настройки; DNS добавляем и проверяем до него.
+    ensure_global_dns_server(session)
 
     if args.vpn_off:
         print(f"VPN-подключение {ifname} оставлено выключенным (--vpn-off).")
