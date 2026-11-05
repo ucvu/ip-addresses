@@ -25,6 +25,9 @@
      --vpn-off подключение, наоборот, остаётся выключенным.
   6. Удаляет использованный .conf файл, если не передан --keep-conf.
 
+При install и update также добавляет DNS 9.9.9.9 для любого подключения
+в "Интернет-фильтры -> Настройка DNS", если такой записи ещё нет.
+
 При --action update выполняются только шаги 2, 4 и 5: имя WireGuard-
 подключения берётся с роутера (первое найденное), .conf файл рядом
 со скриптом игнорируется и не удаляется.
@@ -58,13 +61,14 @@
     domain:intel.com
 
 Использование:
+    python install_wireguard.py --action check --router ADDR
     python install_wireguard.py --action {install|update} --preset FILE --router ADDR
                                 [--online] [--generate-off] [--vpn-off] [--keep-conf]
     python install_wireguard.py --action endpoint --endpoint ADDR:PORT --router ADDR
                                 [--vpn-off]
 
     --action           install — полная установка WireGuard;
-                       update — только обновление списков и маршрутов DNS;
+                       update — обновление списков, маршрутов и дополнительного DNS;
                        endpoint — только смена адреса сервера WireGuard
     --preset FILE      файл пресета: режим маршрутизации + список сервисов
                        (обязателен для install и update)
@@ -83,9 +87,13 @@
 """
 
 import argparse
+import base64
 import hashlib
+import hmac
 import ipaddress
+import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -108,9 +116,10 @@ HTTP_TIMEOUT = (15, 60)  # (соединение, ответ) в секунда�
 VPN_DOWN_DELAY = 10  # секунд паузы после выключения VPN: роутер отвечает раньше,
                      # чем перестраивает маршрутизацию, и проверять сразу бесполезно
 VPN_DOWN_TIMEOUT = 300  # секунд на попытки достучаться до роутера после выключения VPN
-ACTION_DELAY = 1  # секунд паузы между RCI-командами при создании списков/маршрутов:
+ACTION_DELAY = 1  # секунд паузы между RCI-командами при создании списков/маршрутов и настройке DNS:
                   # роутер иногда молча игнорирует команду, если они идут слишком часто подряд
 VERIFY_ATTEMPTS = 3  # попыток проверить и досоздать недостающие списки/маршруты
+GLOBAL_DNS_SERVER = "9.9.9.9"  # дополнительный DNS для любого подключения
 
 USE_FOR_INTERNET = True
 
@@ -133,14 +142,84 @@ def login(session: requests.Session) -> None:
     if resp.status_code == 200:
         return  # сессия уже авторизована
 
-    realm = resp.headers["X-NDM-Realm"]
-    challenge = resp.headers["X-NDM-Challenge"]
+    if resp.status_code != 401:
+        resp.raise_for_status()
+        raise RuntimeError("Неожиданный ответ на запрос авторизации")
+    auth = resp.headers.get("WWW-Authenticate", "")
+    if "x-ndw4-interactive" in auth.lower():
+        endpoint = re.search(r'endpoint\s*=\s*"([^"]+)"', auth, re.IGNORECASE)
+        path = endpoint.group(1) if endpoint else "/auth"
+        if not path.startswith("/") or path.startswith("//"):
+            raise RuntimeError("Роутер вернул некорректный адрес авторизации NDW4")
+        login_ndw4(session, f"{ROUTER_URL}{path}")
+        return
+
+    realm = resp.headers.get("X-NDM-Realm")
+    challenge = resp.headers.get("X-NDM-Challenge")
+    if not realm or not challenge:
+        raise RuntimeError("Роутер не предоставил поддерживаемый способ авторизации")
     md5_hash = hashlib.md5(f"{USERNAME}:{realm}:{PASSWORD}".encode()).hexdigest()
     sha_hash = hashlib.sha256((challenge + md5_hash).encode()).hexdigest()
 
     resp = session.post(f"{ROUTER_URL}/auth", json={"login": USERNAME, "password": sha_hash},
                         timeout=HTTP_TIMEOUT)
     resp.raise_for_status()
+
+
+def login_ndw4(session: requests.Session, endpoint: str) -> None:
+    """NDW4: тот же обмен Argon2id/SHA3-512, что в веб-интерфейсе роутера."""
+    try:
+        from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
+    except ImportError as exc:
+        raise RuntimeError(
+            'Для входа NDW4 установите: python -m pip install "cryptography>=44,<47"'
+        ) from exc
+
+    def encode(value: bytes) -> str:
+        return base64.b64encode(value).decode("ascii")
+
+    def mac(key: bytes, value: str) -> bytes:
+        return hmac.digest(key, value.encode("utf-8"), "sha3_512")
+
+    def proof(key: bytes, signature: bytes) -> str:
+        return encode(bytes(a ^ b for a, b in zip(key, signature, strict=True)))
+
+    def exchange(payload: dict) -> dict:
+        response = session.post(endpoint, json=payload, timeout=HTTP_TIMEOUT)
+        if response.status_code != 401 or not response.headers.get("X-NDM-Data"):
+            response.raise_for_status()
+            raise RuntimeError("Неожиданный ответ авторизации NDW4")
+        try:
+            return json.loads(base64.b64decode(response.headers["X-NDM-Data"], validate=True))
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("Некорректные данные авторизации NDW4") from exc
+
+    nonce = encode(os.urandom(16))
+    data = exchange({"login": USERNAME, "nonce": nonce})
+    salt = base64.b64decode(data["salt"], validate=True)
+    iterations, memory = data["iter"], data["memcost"]
+    if (len(salt) != 16 or type(iterations) is not int or type(memory) is not int
+            or not 1 <= iterations <= 100 or not 8 <= memory <= 262144):
+        raise RuntimeError("Недопустимые параметры Argon2id от роутера")
+    key = Argon2id(salt=salt, length=64, iterations=iterations, lanes=1,
+                  memory_cost=memory).derive(PASSWORD.encode("utf-8"))
+    client_key = mac(key, "NDW4 Interactive Client Key")
+    stored_key = hashlib.sha3_512(client_key).digest()
+    server_key = mac(key, "NDW4 Interactive Server Key")
+    message = (f"login1={USERNAME},nonce1={nonce};"
+               f"iter2={iterations},memcost2={memory},nonce2={data['nonce']},salt2={data['salt']};"
+               f"login3={USERNAME},nonce3={data['nonce']}")
+    payload = {"login": USERNAME, "nonce": data["nonce"],
+               "proof": proof(client_key, mac(stored_key, message))}
+    signature = exchange(payload)["signature"]
+    if not hmac.compare_digest(base64.b64decode(signature, validate=True), mac(server_key, message)):
+        raise RuntimeError("Подпись сервера NDW4 не прошла проверку. Проверьте данные доступа.")
+    payload.pop("proof")
+    payload["signature-proof"] = proof(client_key, mac(stored_key, message + ";signature4=" + signature))
+    response = session.post(endpoint, json=payload, timeout=HTTP_TIMEOUT)
+    response.raise_for_status()
+    if response.status_code != 200:
+        raise RuntimeError("Роутер не подтвердил авторизацию NDW4")
 
 
 def rci(session: requests.Session, commands: list) -> list:
@@ -739,12 +818,42 @@ def ensure_lists_and_routes(session: requests.Session, lists_to_create: dict, ro
     sys.exit(1)
 
 
+def ensure_global_dns_server(session: requests.Session) -> None:
+    # Запись, привязанная к WireGuard, не заменяет DNS для любого подключения.
+    # Роутер может не успеть применить команду: не объединяем добавление,
+    # сохранение и проверку в один запрос и выдерживаем паузу после каждой записи.
+    for attempt in range(1, VERIFY_ATTEMPTS + 2):
+        data = rci(session, [{"show": {"sc": {"ip": {"name-server": {}}}}}])
+        servers = data[0]["show"]["sc"]["ip"].get("name-server") or []
+        if isinstance(servers, dict):
+            servers = [servers]
+        if any(server.get("address") == GLOBAL_DNS_SERVER
+               and not server.get("interface") and not server.get("domain")
+               for server in servers):
+            print(f"DNS {GLOBAL_DNS_SERVER} для любого подключения настроен.")
+            return
+        if attempt > VERIFY_ATTEMPTS:
+            break
+
+        print(f"Добавляю DNS {GLOBAL_DNS_SERVER} для любого подключения "
+              f"(попытка {attempt}/{VERIFY_ATTEMPTS})...")
+        rci(session, [{"ip": {"name-server": {"address": GLOBAL_DNS_SERVER}}}])
+        time.sleep(ACTION_DELAY)
+        rci(session, [{"system": {"configuration": {"save": {}}}}])
+        time.sleep(ACTION_DELAY)
+
+    print(f"Не удалось настроить DNS {GLOBAL_DNS_SERVER} после "
+          f"{VERIFY_ATTEMPTS} попыток.", file=sys.stderr)
+    sys.exit(1)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--action", choices=["install", "update", "endpoint"], required=True,
+    parser.add_argument("--action", choices=["install", "update", "endpoint", "check"], required=True,
                          help="install — полная установка WireGuard; "
-                              "update — только обновление списков и маршрутов DNS; "
-                              "endpoint — только смена адреса сервера WireGuard")
+                              "update — обновление списков, маршрутов и дополнительного DNS; "
+                              "endpoint — только смена адреса сервера WireGuard; "
+                              "check — проверка доступа без изменения настроек")
     parser.add_argument("--preset", metavar="FILE",
                          help="файл пресета: первая строка 'mode: direct' или 'mode: proxy', "
                               "остальные строки — сервисы geosite:.../geoip:... "
@@ -775,7 +884,7 @@ def parse_args() -> argparse.Namespace:
         host, sep, port = args.endpoint.rpartition(":")
         if not sep or not host or not port.isdigit():
             parser.error("--endpoint должен быть в виде адрес:порт, например vpn.example.com:51820")
-    else:
+    elif args.action != "check":
         if not args.preset:
             parser.error(f"--action {args.action} требует ключ --preset")
         if args.endpoint:
@@ -810,6 +919,15 @@ def main() -> None:
             scheme = "https"  # доменное имя (например, облачный доступ) — почти всегда HTTPS,
                               # а POST на HTTP при редиректе на HTTPS теряет метод/тело запроса
         ROUTER_URL = f"{scheme}://{args.router}"
+
+    if args.action == "check":
+        with requests.Session() as session:
+            login(session)
+            response = session.get(f"{ROUTER_URL}/rci/show/version", timeout=HTTP_TIMEOUT)
+            response.raise_for_status()
+            response.json()
+        print("Авторизация успешна. API роутера доступен. Настройки не изменялись.")
+        return
 
     if args.action == "endpoint":
         session = requests.Session()
@@ -913,6 +1031,10 @@ def main() -> None:
         lists_to_create = {path.stem: read_list_entries(path) for path in list_files}
         lists_to_create = {name: entries for name, entries in lists_to_create.items() if entries}
         ensure_lists_and_routes(session, lists_to_create, route_ifname)
+
+    # Включение VPN может оборвать соединение с роутером и остаётся последним
+    # действием настройки; DNS добавляем и проверяем до него.
+    ensure_global_dns_server(session)
 
     if args.vpn_off:
         print(f"VPN-подключение {ifname} оставлено выключенным (--vpn-off).")
